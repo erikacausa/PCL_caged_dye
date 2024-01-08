@@ -1,0 +1,494 @@
+function [hf, fit_type] = CagedResults_plot_manual_line(CagedResults, distance, Temp, pos, fit_type, exp_path_gen, t_crossover)
+%CagedResults_plot Summary plot
+
+flag_fit = false;
+
+flagcut = true;
+
+
+% possibility to analyse only part of the fluo video (usually 5 sec) if the
+% signal gets bad
+
+cut_data = false; % is true if you want to only look at the data before 
+                  % fac*time
+% cuttinig factor
+fac = 2/5;
+
+
+%% "unstructure" the CagedResults struct
+CR_names = fieldnames(CagedResults);
+
+for i = 1:numel(CR_names)
+    
+    eval([CR_names{i},' = CagedResults.(CR_names{i});'])
+
+end %for
+
+
+%% summary plot
+
+hf = figure(701);
+clf
+hf.Position([3 4]) = flip(size(bf_firstframe))./2;
+scrsz = get(0,'ScreenSize');
+hf.Position([1 2]) = (scrsz([3 4]) - hf.Position([3 4]))./2;
+hfpos = hf.Position;
+
+%--------- axes with pretty picture ---------%
+ha1 = axes;
+hold on
+
+hi = imshow(bf_firstframe,[], 'Parent',ha1);
+
+% coloured arclength map
+dummy = arclength_map;
+dummy(isnan(arclength_map)) = 1;
+cmap = parula(numel(unique(dummy)));
+arclength_map_rgb = reshape(cmap(dummy(:),:,:),[size(arclength_map,1), size(arclength_map,2),3]);
+image('CData',arclength_map_rgb,'alphadata',1*thickline_mask);
+hold on
+
+% plot measuring line now
+hp = plot(x_line,y_line,'g','Clipping','off');%,'LineWidth',1.2);
+hp = plot(x_line(end),y_line(end),'g>','clipping','off');%,'LineWidth',1.2);
+
+% plot beam position
+hpb = plot(x_beam, y_beam, 'rx','LineWidth',1.2);
+hpb=flip(hpb);
+
+% plot x,y of max fluo
+% add the beam position to the vector of calculated maxfluo        
+x_maxfluo = [x_beam ; x_maxfluo];
+y_maxfluo = [y_beam ; y_maxfluo];
+
+hs = scatter(x_maxfluo,y_maxfluo,10, cool(numel(fluo_rts)+1),'filled');
+
+uistack(hpb,'top');
+
+
+% add scalebar
+my_scalebar(gca,arclength_map_rgb,10,px2mum,[0.95 0.86]);
+
+ha1.Position = [0 0.5 0.5 0.5];
+axis equal
+
+hf.Position = hfpos;
+
+
+% ------------- axes with fluo intensity over time --------- %
+
+ha2 = axes;
+ha2.Position = [0.55 0.58 0.35 0.41];
+
+hold on
+box on
+
+plot(fluo_rts, fluo_int,'.-');
+plot(fluo_rts, fluo_int_mask,'.-');
+setsemilogy
+
+max_fluo = max(fluo_int_mask);
+min_fluo = min(fluo_int_mask);
+
+box on
+xlabel('Time, [s]','FontSize',16)
+ylabel('<fluo intensity>, [a.u.]','FontSize',16)
+legend({'whole frame'; 'measuring mask'}, 'Location','NorthEast', 'Box', 'off', 'FontSize',12)
+
+
+ha2.YAxisLocation = 'right';
+axis tight
+
+% inset
+ha3 = axes;
+ha3.Position = ha2.Position;
+ha3.Position([3 4]) = ha3.Position([3 4]) ./ [2 3];
+ha3.Position([1 2]) = ha3.Position([1 2]) + [0.1 0.1];
+ha3.Box = 'on';
+hold on
+
+plot(fluo_rts(1:end/2), fluo_int(1:end/2),'.-');
+plot(fluo_rts(1:end/2), fluo_int_mask(1:end/2),'.-');
+axis tight
+ha3.YLim = [ha3.YLim(1) ha3.YLim(1) + 5*(median(fluo_int_mask) - ha3.YLim(1))];
+
+xlabel('Time, [s]')
+ylabel('<fluo int>, [a.u.]')
+
+
+% ------------ axis with maxfluo vs t ------------- %
+
+ha4 = axes;
+ha4.Position = [0.07 0.1 0.38 0.35];
+
+hold on
+box on
+
+yyaxis left
+
+[~,max_t] =  min(abs(fluo_rts - 2));
+
+arclength_spot_um = arclength_spot_um(1);
+
+spot_dist = arclength_maxfluo_um(1) - arclength_spot_um;
+acc_dist = 0.5;
+
+sigma = (arrayfun(@(i)FitStruct(i).fit_out.sigma, 1:size(fluo_rts)))';
+
+
+% add the first element (t = 0 , beam position) if the distance is small
+if abs(spot_dist) < acc_dist
+    fluo_rts_compl = [ 0 ; fluo_rts ]; 
+    arclength_maxfluo_um = [arclength_spot_um ; arclength_maxfluo_um];
+else
+    fluo_rts_compl = fluo_rts;
+end
+    
+plot(fluo_rts_compl, arclength_maxfluo_um - arclength_maxfluo_um(1),'.')
+
+xlabel('Time, [s]','FontSize',16);
+ylabel('arclength of fluo peak, [\mum]','FontSize',16);
+
+yyaxis right
+plot(fluo_rts, arrayfun(@(i)FitStruct(i).fit_out.sigma, 1:size(fluo_rts,1)), '.');
+ylabel('\sigma of fitting gaussian, [\mum]','FontSize',16);
+
+
+% ----------- axis with norm fluo int as a matrix -------- %
+
+ha5 = axes;
+ha5.Position = [0.6 0.1 0.35 0.35];
+
+max_t=size(fluo_rts,1);
+hpc = pcolor(repmat(arclength_line_um(:)',max_t, 1),...
+    repmat(fluo_rts(1:max_t),1,size(norm_fluo_thickline,2)),...
+    imadjust(norm_fluo_thickline(1:max_t,:),stretchlim(norm_fluo_thickline(1:max_t,:),[0.01 0.995])));
+hpc.EdgeColor = 'none';
+
+hold on
+%arclength maxfluo
+plot(arclength_maxfluo_um, fluo_rts_compl,'g')
+hold on
+%arclength maxfluo + & - sigma to check the distribution
+    
+if abs(spot_dist) < acc_dist
+    plot(arclength_maxfluo_um(2:size(arclength_maxfluo_um)) + sigma, fluo_rts,'r')
+    plot(arclength_maxfluo_um(2:size(arclength_maxfluo_um))  - sigma, fluo_rts,'r')
+else
+    plot(arclength_maxfluo_um(1:size(arclength_maxfluo_um)) + sigma, fluo_rts,'r')
+    plot(arclength_maxfluo_um(1:size(arclength_maxfluo_um))  - sigma, fluo_rts,'r')
+end
+
+xlabel('arclength, [\mum]','FontSize',16)
+ylabel('Time, [s]','FontSize',16)
+
+hc = colorbar;
+hc.Label.String = 'Norm fluo intensity, [a.u.]';
+hc.Label.FontSize = 16;
+
+%val(ll) = A.*exp(-0.5*((arclength_line_um-arclength_fluo_max_um)./sigma).^2)+offset
+
+savefig("Manualline_pos" + string(pos) +".fig");
+
+if flagcut == true
+    arclength_maxfluo_um = filloutliers(arclength_maxfluo_um, 'linear');
+end
+
+
+
+
+%% cut the data at fac*t_tot if the flag is true
+
+if (cut_data == true)
+    lun = length(fluo_rts_compl);
+    cut = fac*lun;
+    arclength_maxfluo_um = arclength_maxfluo_um(1:cut);
+    fluo_rts = fluo_rts(1:cut);
+    fluo_rts_compl = fluo_rts_compl(1:cut);
+    sigma = sigma(1:cut);
+end
+
+
+%% possiblity to choose the fit after visualizing the first plot
+
+if fit_type == 0
+    
+    % dialog to ask the user what fit they want for the displacement fit
+    button = questdlg('How do you want to fit the displacement?',...
+            'Displacement fit', 'Single linear', 'Double linear', 'Single linear' );
+    close;
+    
+     if strcmp(button,'Single linear')
+         fit_type = 1;
+     else
+         fit_type = 2;
+     end
+         
+end
+
+
+
+
+
+%% ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%% Velocity fits 
+
+    % LINEAR
+
+% ----------- Global linear fit with fitlm -  y-intercept =/ 0  -------- %
+
+[p,S] = polyfit(fluo_rts_compl,(arclength_maxfluo_um - arclength_maxfluo_um(1)),1); 
+v_glob_2= p(1);
+intercetta = p(2);
+[displ_2,delta] = polyval(p,fluo_rts_compl,S);
+
+    % SEGMENTED
+    
+% ----------- Linear fit with mldivide until t = i and with polyfit 1st order after t = i  -------- %
+
+i0 = 0.2;
+ii = 0.2;
+
+for i=0.2:0.2:2
+    
+    if i == 0.2
+        j = 1;  %index for creating vectors
+    else
+        j = j + 1;
+    end
+    
+    % Linear fit until i seconds
+    in = 5;
+    [index(j), d] = dsearchn(fluo_rts_compl, i);
+    [a,b] = polyfit(fluo_rts_compl(in:index(j)),(arclength_maxfluo_um(in:index(j)) - arclength_maxfluo_um(1)),1); 
+    v_bef(j) = a(1);
+    inta(j) = a(2);
+        
+    % Linear fit after i seconds  
+    [a,b] = polyfit(fluo_rts_compl(index(j):size(fluo_rts_compl)),(arclength_maxfluo_um(index(j):size(fluo_rts_compl)) - arclength_maxfluo_um(1)),1); 
+    v_aft(j) = a(1);
+    int(j) = a(2);
+end
+
+
+ind_co = 1 + (t_crossover - i0)/ ii;
+
+ind_trial = 3;
+
+
+
+%% Plot velocity
+
+if fit_type == 1
+    figure
+    % --------------- Global linear fit with y-intercept =/ 0
+    % fit
+    subplot(2,2,2)
+    plot(fluo_rts_compl, arclength_maxfluo_um - arclength_maxfluo_um(1),'.' , 'MarkerSize', 5,  'LineWidth', 1,  'Color' , '#0072BD')
+    hold on
+    plot(fluo_rts_compl,displ_2,'-', 'Color' , '#A2142F', 'LineWidth', 1.5)
+    hold on
+    plot(fluo_rts_compl,displ_2+2*delta, 'r--',  fluo_rts_compl, displ_2-2*delta,'r--')
+    title('Linear Fit of displacement with y-intercept=/0')
+    legend('Data','Linear Fit','95% Prediction Interval', 'Location','northwest')
+    xlabel('Time, [s]');
+    ylabel('arclength of fluo peak, [\mum]');
+    txt = ['v= ' num2str(p(1)) ' [\mum/s]'];
+    text(3,0.5,txt, 'Color', '#A2142F')
+    %text(0.4,1.5,['y0= ' num2str(p(2))])
+    % residuals analysis
+    epsilon = (arclength_maxfluo_um - arclength_maxfluo_um(1)) - displ_2;
+    var = sum(epsilon.^2)/(length(arclength_maxfluo_um) - length(p));
+    do = epsilon/sqrt(var);
+    subplot(2,2,4)
+    plot(fluo_rts_compl, do, '*k', 'MarkerSize', 8)
+    hold on
+    yline(0);
+    xlabel('time, [s]')
+    ylabel('Standardized Residuals [-]')
+    title('Standardized residuals for Fit of displacement with y-intercept=/0')
+    
+else
+    
+    % FIT FOR SMALL TIMES
+
+    figure
+    title('Local fit for v for small times')
+    % --------------- Linear fit for t < t_crossover
+    % Fit
+    subplot(2,2,1)
+    plot(fluo_rts_compl(in:index(ind_co)), arclength_maxfluo_um(in:index(ind_co)) - arclength_maxfluo_um(1),'o' , 'MarkerSize', 7,  'LineWidth', 1, 'Color' , '#0072BD')
+    hold on
+    %plot(fluo_rts_compl(in:index(ind_co)), v_bef(ind_co) * fluo_rts_compl(in:index(ind_co))  ,'-', 'Color' , '#A2142F', 'LineWidth', 1.5)
+    plot(fluo_rts_compl(in:index(ind_co)) , polyval([v_bef(ind_co),inta(ind_co)] , fluo_rts_compl(in:index(ind_co))),'-', 'Color' , '#D95319', 'LineWidth', 1.5)
+    title('Linear Fit of displacement until t = t_co')
+    legend('Data','Linear Fit', 'Location','northwest')
+    xlabel('Time, [s]');
+    ylabel('arclength of fluo peak, [\mum]');
+    txt = ['v= ' num2str(v_bef(ind_co)) ' [\mum/s]'];
+    text(0.4,3,txt, 'Color', '#A2142F')
+    % residuals 
+    epsilon = (arclength_maxfluo_um(1:index(ind_co)) - arclength_maxfluo_um(1)) - v_bef(2)*fluo_rts_compl(1:index(ind_co));
+    var = sum(epsilon.^2)/(length(arclength_maxfluo_um(1:index(ind_co))) - 1);
+    do = epsilon/sqrt(var);
+    subplot(2,2,3)
+    plot(fluo_rts_compl(1:index(ind_co)), do, '*k', 'MarkerSize', 8)
+    hold on
+    yline(0);
+    xlabel('time, [s]')
+    ylabel('Standardized Residuals [-]')
+    title('Standardized residuals for fit t<t_co')
+    
+    % Plot v with double linear fit
+    subplot(2,2,2)
+    plot(fluo_rts_compl(in:length(fluo_rts_compl)), arclength_maxfluo_um(in:length(fluo_rts_compl)) - arclength_maxfluo_um(1), 'o' , 'MarkerSize', 5,  'LineWidth', 1, 'Color' , '#0072BD')
+    hold on
+    plot(fluo_rts_compl(index(ind_co):size(fluo_rts_compl)) , polyval([v_aft(ind_co),int(ind_co)] , fluo_rts_compl(index(ind_co):size(fluo_rts_compl))),'-', 'Color' , '#A2142F', 'LineWidth', 1.5)
+    hold on
+    plot(fluo_rts_compl(in:index(ind_co)) , polyval([v_bef(ind_co),inta(ind_co)] , fluo_rts_compl(in:index(ind_co))),'-', 'Color' , '#D95319', 'LineWidth', 1.5)
+    %plot(fluo_rts_compl(in:index(ind_co)), v_bef(ind_co) * fluo_rts_compl(in:index(ind_co)),'-', 'Color' , '#D95319', 'LineWidth', 1.5)
+    title('Displacement linear fit with cross-over')
+    legend('Data','Linear fit from t_co', 'Linear fit before t_co', 'Location','northwest')
+    xlabel('Time, [s]');
+    ylabel('arclength of fluo peak, [\mum]');
+    txt = ['v= ' num2str(v_aft(ind_co)) ' [\mum/s]'];
+    text(2,5,txt, 'Color', '#A2142F')
+    txt = ['v= ' num2str(v_bef(ind_co)) ' [\mum/s]'];
+    text(0.6,3,txt, 'Color', '#D95319')
+    % residuals analysis for t > t_crossover
+    epsilon = (arclength_maxfluo_um(index(ind_co):length(arclength_maxfluo_um)) - arclength_maxfluo_um(1)) - v_aft(ind_co)*fluo_rts_compl(index(ind_co):length(arclength_maxfluo_um));
+    var = sum(epsilon.^2)/(length(arclength_maxfluo_um(index(ind_co):length(arclength_maxfluo_um))) - 1);
+    do = epsilon/sqrt(var);
+    subplot(2,2,3)
+    plot(fluo_rts_compl(index(ind_co):length(arclength_maxfluo_um)), do, '*k', 'MarkerSize', 8)
+    xlabel('time, [s]')
+    ylabel('Standardized Residuals [-]')
+    title('Standardized residuals for fit t >t_co' )    
+    
+end
+
+    %saving
+    savefig("displacement_fit_" + string(pos) + ".fig");
+
+    
+    
+%% Standard deviation fit
+
+%fits the sigma data for small times after the dye activation with the
+%equation of diffusion from a point-source modified to taking into account
+%the finite dimension of the dye activation spot and the diffusion in a
+%densely packed layer
+
+% Define the range for fitting
+range = 0.15; % in [s], define the fitting range
+range_end = find(fluo_rts <= range, 1, 'last');
+
+% cut the data
+fluo_rts_range = fluo_rts(1:range_end);
+sigma_range = sigma(1:range_end);
+
+% actually fit
+fit_func = @(D_app, alfa, x) (2*D_app*x).^alfa + 2.5;
+
+[fit_result, gof] = fit(fluo_rts_range, sigma_range, fit_func, 'StartPoint', [1e-6, 1]);
+
+
+
+% Calculate the residuals
+fitted_values = fit_result(fluo_rts_range);
+residuals = sigma_range - fitted_values;
+
+% convert the diffusivity in cm^2/s
+D_app_cm = fit_result.D_app*10^-8;
+
+
+% plot 
+figureWidth = 8;  % Set your desired width in inches
+figureHeight = 3; % Set your desired height in inches
+fig = figure('Position', [100, 200, figureWidth*100, figureHeight*100]); % Multiplying by 100 to convert inches to pixels
+
+subplot(1, 2, 1);
+% sigma data and fit in the selected range
+scatter(fluo_rts_range, sigma_range, 'filled');
+hold on
+plot(fluo_rts_range, fitted_values, 'r-','LineWIdth',3); % Fitted curve
+text(0, max(fitted_values), sprintf('D_app [cm^2/s] = %.2e', D_app_cm),'Color', 'red');
+text(0, max(fitted_values)-2 , sprintf('alfa  = %.2f', fit_result.alfa),'Color', 'red');
+
+legend('Data', 'Fit','Location','SouthEast');
+
+% Set font size
+set(gca, 'FontSize', 12, 'FontWeight', 'bold');
+
+% Thicken the axes
+set(gca, 'Box', 'on', 'LineWidth', 1.2, 'XColor', 'k', 'YColor', 'k');
+
+% Add labels and title
+xlabel('time [s]');
+ylabel({'\sigma of fitting gaussian [\mum]'});
+
+
+subplot(1, 2, 2);
+% sigma data in all the time range and fit
+scatter(fluo_rts, sigma, 'filled');
+hold on
+plot(fluo_rts_range, fitted_values, 'r-','LineWIdth',3); % Fitted curve
+legend('Data', 'Fit','Location','SouthEast');
+
+% Add labels and title
+xlabel('time [s]');
+ylabel({'\sigma of fitting gaussian [\mum]'});
+% Set font size
+set(gca, 'FontSize', 12, 'FontWeight', 'bold');
+
+% Thicken the axes
+set(gca, 'Box', 'on', 'LineWidth', 1.2, 'XColor', 'k', 'YColor', 'k');
+
+% save figure
+savefig("diffusion_fit_pos" + string(pos) + ".fig");
+
+
+    
+    
+    
+    
+%% saving things
+
+cross_over = [arclength_maxfluo_um(index(ind_co)) - arclength_maxfluo_um(1) sigma(index(ind_co))];
+
+fluo_mm = [max_fluo min_fluo];
+
+
+Result_save = fullfile(exp_path_gen,['Result.mat']);
+
+if isempty(dir(Result_save)) == 0
+    load(Result_save);
+else
+    Result.path_gen = exp_path_gen;
+end
+
+
+Result(pos).distance = distance+(pos-1)*1.5; %distance from epithelium in um
+if fit_type == 1
+    Result(pos).v1 = v_glob_1; % Global linear fit with mldivide -  y-intercept = 0
+    Result(pos).v2 = p; % Global linear fit with fitlm -  y-intercept =/ 0  p(1) = v ; p(2) = intercetta
+else
+    Result(pos).crossover = t_crossover;
+    Result(pos).v1 = v_bef(ind_co); % v before co
+    Result(pos).v2 = v_aft(ind_co); % v after co
+end
+
+% save parameters from sigma fit
+Result(pos).D_app = D_app_cm; 
+Result(pos).alfa = fit_result.alfa;
+Result(pos).range = range;
+
+Result(pos).fluo = fluo_mm; % fluo max and fluo min
+
+if cut_data == true
+    Result(pos).cut = fac;
+end
+
+save(Result_save,'Result');
+
+end
